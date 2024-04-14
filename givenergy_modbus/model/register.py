@@ -7,10 +7,14 @@ from typing import Any, Callable, Optional, Union
 from pydantic.utils import GetterDict
 
 from givenergy_modbus.model import TimeSlot
-
+import pdb
 
 class Converter:
-    """Type of data register represents. Encoding is always big-endian."""
+    """Type of data register represents.
+
+    These are used by Pydantic to convert raw register integer
+    values into scaled values. Encoding is always big-endian.
+    """
 
     @staticmethod
     def uint16(val: int) -> int:
@@ -150,6 +154,7 @@ class RegisterGetter(GetterDict):
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return a named register's value, after pre- and post-conversion."""
+        print("Getter.get", key)
         try:
             r = self.REGISTER_LUT[key]
         except KeyError:
