@@ -132,11 +132,6 @@ class ReadRegistersResponse(ReadRegistersMessage, TransparentResponse, ABC):
         # crc = CrcModbus().process(crc_builder.to_string()).final()
         # _logger.warning(f'supplied crc = {self.check}, calculated crc = {crc}')
 
-    def to_dict(self) -> dict[int, int]:
-        """Return the registers as a dict of register_index:value. Accounts for base_register offsets."""
-        return {
-            k: v for k, v in enumerate(self.register_values, start=self.base_register)
-        }
 
     def is_suspicious(self) -> bool:
         """Try to identify known-bad data in register lookup calls and prevent them from entering the dispatching."""
@@ -167,7 +162,7 @@ class ReadRegistersResponse(ReadRegistersMessage, TransparentResponse, ABC):
             if count_known_bad_register_values > 5:
                 _logger.debug(
                     f"Ignoring known suspicious update with {count_known_bad_register_values} known bad "
-                    f"register values {self}: {self.to_dict()}"
+                    f"register values {self}"
                 )
                 return True
         return False

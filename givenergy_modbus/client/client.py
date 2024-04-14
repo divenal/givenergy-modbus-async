@@ -28,6 +28,7 @@ class Client:
     """Asynchronous client utilising long-lived connections to a network device."""
 
     framer: Framer
+    # The set of outstanding requests waiting for a response
     expected_responses: "Dict[int, Future[TransparentResponse]]" = {}
     plant: Plant
     # refresh_count: int = 0
@@ -150,7 +151,8 @@ class Client:
     ) -> Plant:
         """Refresh data about the Plant."""
         reqs = commands.refresh_plant_data(
-            full_refresh, self.plant.number_batteries, max_batteries
+            full_refresh, self.plant.number_batteries, max_batteries,
+            self.plant.additional_holding_registers
         )
         await self.execute(reqs, timeout=timeout, retries=retries)
         return self.plant
@@ -185,7 +187,16 @@ class Client:
         await self.execute(requests, timeout=timeout, retries=retries)
 
     async def _task_network_consumer(self):
-        """Task for orchestrating incoming data."""
+        """Task for orchestrating incoming data.
+
+        A byte stream is read from the socket and split into message frames.
+        Messages can be HeartBeat requests, to which we must respond,
+        or TransparentResponses, which may be replies to our requests,
+        but may also be unsolicited. (The dongle sends all responses to
+        all connected clients.)
+        For each TransparentResponse that matches an entry in our work
+        queue, we mark it as complete.
+        """
         while hasattr(self, "reader") and self.reader and not self.reader.at_eof():
             frame = await self.reader.read(300)
             # await self.debug_frames['all'].put(frame)
@@ -214,15 +225,14 @@ class Client:
                     else:
                         _logger.info("%s", message)
 
+                # Is this a response the producer task is waiting for ?
                 future = self.expected_responses.get(message.shape_hash())
-
                 if future and not future.done():
                     future.set_result(message)
-                # try:
+
+                # Update the plant's cache of registers.
                 self.plant.update(message)
-                # except RegisterCacheUpdateFailed as e:
-                #     # await self.debug_frames['error'].put(frame)
-                #     _logger.debug(f'Ignoring {message}: {e}')
+
         _logger.debug(
             "network_consumer reader at EOF, cannot continue, closing connection"
         )
@@ -264,7 +274,13 @@ class Client:
         retries: int,
         return_exceptions: bool = False,
     ) -> "Future[List[TransparentResponse]]":
-        """Helper to perform multiple requests in bulk."""
+        """Helper to perform multiple requests in bulk.
+
+        Create a coroutine for each request, and schedule them all
+        All the requests will be sent out, then all the responses
+        will be awaited.
+        Order of execution is not guaranteed.
+        """
         return asyncio.gather(
             *[
                 self.send_request_and_await_response(
