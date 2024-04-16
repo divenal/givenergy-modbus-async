@@ -7,6 +7,7 @@ from givenergy_modbus.pdu.base import (
     ClientIncomingMessage,
     ClientOutgoingMessage,
 )
+from givenergy_modbus.exceptions import InvalidFrame
 
 _logger = logging.getLogger(__name__)
 
@@ -191,8 +192,8 @@ class TransparentResponse(TransparentMessage, ClientIncomingMessage, ABC):
         elif transparent_function_code == 6:
             return WriteHoldingRegisterResponse
         else:
-            raise NotImplementedError(
-                f"TransparentResponse function #{transparent_function_code} decoder"
+            raise InvalidFrame(
+                f"TransparentResponse function #{transparent_function_code} decoder", None
             )
 
     def _update_check_code(self):
