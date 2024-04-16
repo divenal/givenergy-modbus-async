@@ -49,68 +49,36 @@ class RegisterMap:
     BATTERY_PAUSE_MODE = 318
 
 
-def refresh_additional_holding_registers(
-    base_register: int,
-) -> list[TransparentRequest]:
-    """Requests one specific set of holding registers.
-
-    This is intended to be used in cases where registers may or may not be present,
-    depending on device capabilities."""
-    return [
-        ReadHoldingRegistersRequest(
-            base_register=base_register, register_count=60, slave_address=0x32
-        )
-    ]
-
-
+# update interesting registers.
+# By default, it will fetch everything available,
+# but if you only want a specific category, you can limit the
+# set of registers in various categories.  Eg if you only want
+# input registers, pass max_holding as -1. (They specify the
+# base register, so 0 and 59 are equivalent.)
+# TODO I think this really belongs in the client, rather than here ..?
 def refresh_plant_data(
-    complete: bool,
-    number_batteries: int = 1,
-    max_batteries: int = 5,
-    additional_holding_registers: Optional[list[int]] = None,
+        max_holding: int,
+        max_input: int,
+        max_battery_input,
+        num_batteries
 ) -> list[TransparentRequest]:
     """Refresh plant data."""
-    requests: list[TransparentRequest] = [
-        ReadInputRegistersRequest(
-            base_register=0, register_count=60, slave_address=0x32
-        ),
-        ReadInputRegistersRequest(
-            base_register=180, register_count=60, slave_address=0x32
-        ),
-    ]
-    if complete:
-        requests.append(
-            ReadHoldingRegistersRequest(
-                base_register=0, register_count=60, slave_address=0x32
-            )
-        )
-        requests.append(
-            ReadHoldingRegistersRequest(
-                base_register=60, register_count=60, slave_address=0x32
-            )
-        )
-        requests.append(
-            ReadHoldingRegistersRequest(
-                base_register=120, register_count=60, slave_address=0x32
-            )
-        )
-        requests.append(
-            ReadInputRegistersRequest(
-                base_register=120, register_count=60, slave_address=0x32
-            )
-        )
 
-        if additional_holding_registers:
-            for hr in additional_holding_registers:
-                requests.extend(refresh_additional_holding_registers(hr))
+    requests: list[TransparentRequest] = []
 
-        number_batteries = max_batteries
-    for i in range(number_batteries):
-        requests.append(
-            ReadInputRegistersRequest(
-                base_register=60, register_count=60, slave_address=0x32 + i
-            )
-        )
+    for base in [0, 180]:
+        if base <= max_input:
+            requests.append(ReadInputRegistersRequest(base_register=base, register_count=60, slave_address=0x32))
+
+    for base in [0, 60, 120, 180, 300 ]:
+        if base <= max_holding:
+            requests.append(ReadHoldingRegistersRequest(base_register=base, register_count=60, slave_address=0x32))
+
+    for batt in range(num_batteries):
+        for base in [60, 120]:
+            if base <= max_battery_input:
+                requests.append(ReadInputRegistersRequest(base_register=base, register_count=60, slave_address=0x32 + batt))
+
     return requests
 
 

@@ -154,7 +154,6 @@ class RegisterGetter(GetterDict):
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return a named register's value, after pre- and post-conversion."""
-        print("Getter.get", key)
         try:
             r = self.REGISTER_LUT[key]
         except KeyError:

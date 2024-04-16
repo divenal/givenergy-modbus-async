@@ -76,34 +76,19 @@ class Client:
         self.connected = True
         _logger.info("Connection established to %s:%d", self.host, self.port)
 
-    async def detect_plant(self, timeout: int = 1, retries: int = 3) -> None:
+    async def detect_plant(self, timeout: int = 2, retries: int = 3) -> None:
         """Detect inverter capabilities that influence how subsequent requests are made."""
-        _logger.info("Detectig plant")
+        _logger.info("Detecting plant")
 
-        # Refresh the core set of registers that work across all inverters
-        await self.refresh_plant(True, timeout=timeout, retries=retries)
+        # Send requests for all known register groups.
+        # The plant will automatically update the max registers based
+        # on the responses, so nothing more is needed here.
+        reqs = commands.refresh_plant_data(9999, 9999, 9999, 5)
+        await self.execute(reqs, timeout=timeout, retries=retries, return_exceptions = True)
 
         # Use that to detect the number of batteries
-        self.plant.detect_batteries()
+        # self.plant.detect_batteries()
         _logger.info("Batteries detected: %d", self.plant.number_batteries)
-
-        # Some devices support additional registers
-        # When unsupported, devices appear to simple ignore requests
-        possible_additional_holding_registers = [300]
-        for hr in possible_additional_holding_registers:
-            try:
-                reqs = commands.refresh_additional_holding_registers(hr)
-                await self.execute(reqs, timeout=timeout, retries=retries)
-                _logger.info(
-                    "Detected additional holding register support (base_register=%d)",
-                    hr,
-                )
-                self.plant.additional_holding_registers.append(hr)
-            except asyncio.TimeoutError:
-                _logger.debug(
-                    "Inverter did not respond to holder register query (base_register=%d)",
-                    hr,
-                )
 
     async def close(self) -> None:
         """Disconnect from the remote host and clean up tasks and queues."""
@@ -150,11 +135,14 @@ class Client:
         retries: int = 0,
     ) -> Plant:
         """Refresh data about the Plant."""
+        plant = self.plant
         reqs = commands.refresh_plant_data(
-            full_refresh, self.plant.number_batteries, max_batteries,
-            self.plant.additional_holding_registers
-        )
-        await self.execute(reqs, timeout=timeout, retries=retries)
+            max_holding = plant.max_holding_reg if full_refresh else -1,
+            max_input = plant.max_input_reg,
+            max_battery_input = plant.max_battery_reg,
+            num_batteries = max_batteries
+            )
+        await self.execute(reqs, timeout=timeout, retries=retries, return_exceptions = True)
         return self.plant
 
     async def watch_plant(
@@ -203,6 +191,8 @@ class Client:
             for message in self.framer.decode(frame):
                 _logger.debug("Processing %s", message)
                 if isinstance(message, ExceptionBase):
+                    # FIXME: because we can receive unsolicited messages, can't
+                    # assume that it was a response from one of our own messages
                     _logger.warning(
                         "Expected response never arrived but resulted in exception: %s",
                         message,
