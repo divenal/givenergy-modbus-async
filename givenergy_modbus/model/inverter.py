@@ -1,17 +1,10 @@
 from enum import IntEnum, StrEnum
 import math
 
-from pydantic import BaseConfig, create_model
-
-from givenergy_modbus.model.register import HR, IR
 from givenergy_modbus.model.register import (
+    HR, IR, RegisterGetter, RegisterCache,
     Converter as C,
-)
-from givenergy_modbus.model.register import (
     RegisterDefinition as Def,
-)
-from givenergy_modbus.model.register import (
-    RegisterGetter,
 )
 
 
@@ -127,8 +120,8 @@ class Status(IntEnum):
     FLASHING_FIRMWARE_UPDATE = 4
 
 
-class InverterRegisterGetter(RegisterGetter):
-    """Structured format for all inverter attributes."""
+class Inverter(RegisterGetter):
+    """Inverter provides a friendly interface to the register cache."""
 
     REGISTER_LUT = {
         #
@@ -321,14 +314,3 @@ class InverterRegisterGetter(RegisterGetter):
     #     """Computes the discharge slot 2."""
     #     return e_pv1_day + e_pv2_day
 
-
-class InverterConfig(BaseConfig):
-    """Pydantic configuration for the Inverter class."""
-
-    orm_mode = True
-    getter_dict = InverterRegisterGetter
-
-
-Inverter = create_model(
-    "Inverter", __config__=InverterConfig, **InverterRegisterGetter.to_fields()
-)  # type: ignore[call-overload]

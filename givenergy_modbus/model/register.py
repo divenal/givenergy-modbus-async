@@ -1,20 +1,119 @@
 from dataclasses import dataclass
-from datetime import datetime
+import datetime
 from json import JSONEncoder
+from typing import TYPE_CHECKING, DefaultDict, Optional, Any, Callable, Union
 import math
-from typing import Any, Callable, Optional, Union
-
-from pydantic.utils import GetterDict
 
 from givenergy_modbus.model import TimeSlot
-import pdb
+
+# Registers are the fundamental entity on inverter and battery.
+# They come in 'Holding' and 'Input' flavours - the former are
+# read-write and the latter are read-only.
+
+class Register:
+    """Register base class."""
+
+    TYPE_HOLDING = "HR"
+    TYPE_INPUT = "IR"
+
+    _type: str
+    _idx: int
+
+    def __init__(self, idx):
+        self._idx = idx
+
+    def __str__(self):
+        return "%s_%d" % (self._type, int(self._idx))
+
+    __repr__ = __str__
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, Register)
+            and self._type == other._type
+            and self._idx == other._idx
+        )
+
+    def __hash__(self):
+        return hash((self._type, self._idx))
+
+
+class HR(Register):
+    """Holding Register."""
+
+    _type = Register.TYPE_HOLDING
+
+
+class IR(Register):
+    """Input Register."""
+
+    _type = Register.TYPE_INPUT
+
+    
+
+# A RegisterCache is a dictionary containing the most
+# recent register values read from a modbus node.
+# The Plant has one RegisterCache per node address.
+
+class RegisterCache(DefaultDict[Register, int]):
+    """Holds a cache of Registers populated after querying a device."""
+
+    def __init__(self, registers: Optional[dict[Register, int]] = None) -> None:
+        if registers is None:
+            registers = {}
+        super().__init__(lambda: 0, registers)
+
+    def json(self) -> str:
+        """Return JSON representation of the register cache, to mirror `from_json()`."""  # noqa: D402,D202,E501
+        return json.dumps(self)
+
+    @classmethod
+    def from_json(cls, data: str) -> "RegisterCache":
+        """Instantiate a RegisterCache from its JSON form."""
+
+        def register_object_hook(object_dict: dict[str, int]) -> dict[Register, int]:
+            """Rewrite the parsed object to have Register instances as keys instead of their (string) repr."""
+            lookup = {"HR": HR, "IR": IR}
+            ret = {}
+            for k, v in object_dict.items():
+                if k.find("(") > 0:
+                    reg, idx = k.split("(", maxsplit=1)
+                    idx = idx[:-1]
+                elif k.find(":") > 0:
+                    reg, idx = k.split(":", maxsplit=1)
+                else:
+                    raise ValueError(f"{k} is not a valid Register type")
+                try:
+                    ret[lookup[reg](int(idx))] = v
+                except ValueError:
+                    # unknown register, discard silently
+                    continue
+            return ret
+
+        return cls(registers=(json.loads(data, object_hook=register_object_hook)))
+
+
+class RegisterEncoder(JSONEncoder):
+    """Custom JSONEncoder to work around Register behaviour.
+
+    This is a workaround to force registers to render themselves as strings instead of
+    relying on the internal identity by default.
+    """
+
+    def default(self, o: Any) -> str:
+        """Custom JSON encoder to treat RegisterCaches specially."""
+        if isinstance(o, Register):
+            return f"{o._type}_{o._idx}"
+        else:
+            return super().default(o)
+
+
+
+# Raw registers are simply unsigned 16-bit integers.
+# These are used to convert them to a more appropriate python data type
 
 class Converter:
-    """Type of data register represents.
-
-    These are used by Pydantic to convert raw register integer
-    values into scaled values. Encoding is always big-endian.
-    """
+    """Type of data register represents."""
 
     @staticmethod
     def uint16(val: int) -> int:
@@ -130,6 +229,8 @@ class Converter:
         return None
 
 
+# This provides a recipe for converting one or more low-level registers into
+# a human-readable format.
 @dataclass(init=False)
 class RegisterDefinition:
     """Specifies how to convert raw register values into their actual representation."""
@@ -147,19 +248,34 @@ class RegisterDefinition:
         return hash(self.registers)
 
 
-class RegisterGetter(GetterDict):
+# This implements the recipe described in a RegisterDefintion to
+# provide a value. It is the parent class of Inverter and Battery
+
+class RegisterGetter:
     """Specifies how device attributes are derived from raw register values."""
 
+    # these are provided by a subclass
     REGISTER_LUT: dict[str, RegisterDefinition]
+    cache: RegisterCache
 
+    def __init__(self, cache: RegisterCache):
+        self.cache = cache
+
+    # this implements the magic of providing attributes based
+    # on the register lut
+    def __getattr__(self, name:str):
+        print('getattr:', name)
+        return self.get(name)
+
+    # or you can just use inverter.get('name')
     def get(self, key: str, default: Any = None) -> Any:
         """Return a named register's value, after pre- and post-conversion."""
         try:
             r = self.REGISTER_LUT[key]
         except KeyError:
             return default
-
-        regs = [self._obj.get(r) for r in r.registers]
+        regs = [self.cache[r] for r in r.registers]
+        print(r, regs)
 
         if None in regs:
             return None
@@ -181,88 +297,3 @@ class RegisterGetter(GetterDict):
                     pass
                 return r.post_conv(val)
         return val
-
-    @classmethod
-    def to_fields(cls) -> dict[str, tuple[Any, None]]:
-        """Determine a pydantic fields definition for the class."""
-
-        def infer_return_type(obj: Any):
-            if hasattr(obj, "__annotations__") and (
-                ret := obj.__annotations__.get("return", None)
-            ):
-                return ret
-            return obj  # assume it is a class/type already?
-
-        def return_type(v: RegisterDefinition):
-            if v.post_conv:
-                if isinstance(v.post_conv, tuple):
-                    return infer_return_type(v.post_conv[0])
-                else:
-                    return infer_return_type(v.post_conv)
-            elif v.pre_conv:
-                if isinstance(v.pre_conv, tuple):
-                    return infer_return_type(v.pre_conv[0])
-                else:
-                    return infer_return_type(v.pre_conv)
-            return Any
-
-        register_fields = {
-            k: (return_type(v), None) for k, v in cls.REGISTER_LUT.items()
-        }
-
-        return register_fields
-
-
-class RegisterEncoder(JSONEncoder):
-    """Custom JSONEncoder to work around Register behaviour.
-
-    This is a workaround to force registers to render themselves as strings instead of
-    relying on the internal identity by default.
-    """
-
-    def default(self, o: Any) -> str:
-        """Custom JSON encoder to treat RegisterCaches specially."""
-        if isinstance(o, Register):
-            return f"{o._type}_{o._idx}"
-        else:
-            return super().default(o)
-
-
-class Register:
-    """Register base class."""
-
-    TYPE_HOLDING = "HR"
-    TYPE_INPUT = "IR"
-
-    _type: str
-    _idx: int
-
-    def __init__(self, idx):
-        self._idx = idx
-
-    def __str__(self):
-        return "%s_%d" % (self._type, int(self._idx))
-
-    __repr__ = __str__
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, Register)
-            and self._type == other._type
-            and self._idx == other._idx
-        )
-
-    def __hash__(self):
-        return hash((self._type, self._idx))
-
-
-class HR(Register):
-    """Holding Register."""
-
-    _type = Register.TYPE_HOLDING
-
-
-class IR(Register):
-    """Input Register."""
-
-    _type = Register.TYPE_INPUT

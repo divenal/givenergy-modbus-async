@@ -4,10 +4,8 @@ from typing import Any
 from givenergy_modbus.model import GivEnergyBaseModel
 from givenergy_modbus.model.battery import Battery
 from givenergy_modbus.model.inverter import Inverter
-from givenergy_modbus.model.register import HR, IR
-from givenergy_modbus.model.register_cache import (
-    RegisterCache,
-)
+from givenergy_modbus.model.register import HR, IR, RegisterCache
+
 from givenergy_modbus.pdu import (
     ClientIncomingMessage,
     NullResponse,
@@ -190,12 +188,12 @@ class Plant(GivEnergyBaseModel):
     @property
     def inverter(self) -> Inverter:
         """Return Inverter model for the Plant."""
-        return Inverter.from_orm(self.register_caches[0x32])
+        return Inverter(self.register_caches[0x32])
 
     @property
     def batteries(self) -> list[Battery]:
         """Return Battery models for the Plant."""
         return [
-            Battery.from_orm(self.register_caches[i + 0x32])
+            Battery(self.register_caches[i + 0x32])
             for i in range(self.number_batteries)
         ]

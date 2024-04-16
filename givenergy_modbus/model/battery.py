@@ -1,16 +1,9 @@
 from enum import IntEnum
 
-from pydantic import BaseConfig, create_model
-
-from givenergy_modbus.model.register import IR
 from givenergy_modbus.model.register import (
+    IR, RegisterGetter,
     Converter as DT,
-)
-from givenergy_modbus.model.register import (
     RegisterDefinition as Def,
-)
-from givenergy_modbus.model.register import (
-    RegisterGetter,
 )
 
 
@@ -21,7 +14,7 @@ class UsbDevice(IntEnum):
     DISK = 8
 
 
-class BatteryRegisterGetter(RegisterGetter):
+class Battery(RegisterGetter):
     """Structured format for all battery attributes."""
 
     REGISTER_LUT = {
@@ -79,20 +72,6 @@ class BatteryRegisterGetter(RegisterGetter):
     }
 
 
-class BatteryConfig(BaseConfig):
-    """Pydantic configuration for the Battery class."""
-
-    orm_mode = True
-    getter_dict = BatteryRegisterGetter
-
-
-_Battery = create_model(
-    "Battery", __config__=BatteryConfig, **BatteryRegisterGetter.to_fields()
-)  # type: ignore[call-overload]
-
-
-class Battery(_Battery):  # type: ignore[misc,valid-type]
-    """Add some utility methods to the base pydantic class."""
 
     def is_valid(self) -> bool:
         """Try to detect if a battery exists based on its attributes."""

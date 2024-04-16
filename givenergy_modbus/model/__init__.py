@@ -6,22 +6,16 @@ from datetime import time
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+# from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from custom_components.givenergy_local.givenergy_modbus.model.register_cache import (
+    from givenergy_modbus.model.register import (
         RegisterCache,
     )
 
 
-class GivEnergyBaseModel(BaseModel):
+class GivEnergyBaseModel:
     """Structured format for all other attributes."""
-
-    class Config:  # noqa: D106
-        allow_mutation = False
-        frozen = True
-        use_enum_values = True
-        orm_mode = True
 
     @classmethod
     def from_registers(cls, register_cache: RegisterCache):
