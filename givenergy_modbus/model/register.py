@@ -10,6 +10,7 @@ from givenergy_modbus.model import TimeSlot
 # They come in 'Holding' and 'Input' flavours - the former are
 # read-write and the latter are read-only.
 
+# The Register class is just used as a key to identify a register.
 class Register:
     """Register base class."""
 
@@ -110,7 +111,8 @@ class RegisterEncoder(JSONEncoder):
 
 
 # Raw registers are simply unsigned 16-bit integers.
-# These are used to convert them to a more appropriate python data type
+# The following classes are used to convert them to a more appropriate
+# python data type
 
 class Converter:
     """Type of data register represents."""
@@ -225,12 +227,17 @@ class Converter:
     def datetime(year, month, day, hour, min, sec) -> Optional[datetime]:
         """Compose a datetime from 6 registers."""
         if None not in [year, month, day, hour, min, sec]:
-            return datetime(year + 2000, month, day, hour, min, sec)
+            return datetime.datetime(year + 2000, month, day, hour, min, sec)
         return None
 
 
 # This provides a recipe for converting one or more low-level registers into
 # a human-readable format.
+# The pre_conv is one of the Convert functions above, or None
+# The post_conv can be one of the above, or an enum class
+# In addition, the optional valid field can be used to store the range
+# of valid values that can be written to a holding register. None means
+# the register is not writable.
 @dataclass(init=False)
 class RegisterDefinition:
     """Specifies how to convert raw register values into their actual representation."""
@@ -238,11 +245,13 @@ class RegisterDefinition:
     pre_conv: Union[Callable, tuple, None]
     post_conv: Union[Callable, tuple[Callable, Any], None]
     registers: tuple["Register"]
+    valid: None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, valid = None):
         self.pre_conv = args[0]
         self.post_conv = args[1]
         self.registers = args[2:]  # type: ignore[assignment]
+        self.valid = valid
 
     def __hash__(self):
         return hash(self.registers)
@@ -264,7 +273,6 @@ class RegisterGetter:
     # this implements the magic of providing attributes based
     # on the register lut
     def __getattr__(self, name:str):
-        print('getattr:', name)
         return self.get(name)
 
     # or you can just use inverter.get('name')
