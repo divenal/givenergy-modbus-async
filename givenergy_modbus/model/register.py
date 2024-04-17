@@ -275,7 +275,6 @@ class RegisterGetter:
         except KeyError:
             return default
         regs = [self.cache[r] for r in r.registers]
-        print(r, regs)
 
         if None in regs:
             return None

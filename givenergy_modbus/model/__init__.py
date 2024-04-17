@@ -4,24 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import time
 from enum import IntEnum
-from typing import TYPE_CHECKING
-
-# from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from givenergy_modbus.model.register import (
-        RegisterCache,
-    )
-
-
-class GivEnergyBaseModel:
-    """Structured format for all other attributes."""
-
-    @classmethod
-    def from_registers(cls, register_cache: RegisterCache):
-        """Constructor parsing registers directly."""
-        raise NotImplementedError()
-
 
 class DefaultUnknownIntEnum(IntEnum):
     """Enum that returns unknown instead of blowing up."""

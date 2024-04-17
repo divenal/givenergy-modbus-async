@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-from givenergy_modbus.model import GivEnergyBaseModel
 from givenergy_modbus.model.battery import Battery
 from givenergy_modbus.model.inverter import Inverter
 from givenergy_modbus.model.register import HR, IR, RegisterCache
@@ -18,7 +17,7 @@ from givenergy_modbus.pdu import (
 _logger = logging.getLogger(__name__)
 
 
-class Plant(GivEnergyBaseModel):
+class Plant:
     """Representation of a complete GivEnergy plant.
 
     A plant comprises an inverter and some batteries. Each has
@@ -47,14 +46,8 @@ class Plant(GivEnergyBaseModel):
     data_adapter_serial_number: str = ""            # cached from incoming responses
     number_batteries: int = 0                       # number of known batteries
 
-    class Config:  # noqa: D106
-        allow_mutation = True
-        frozen = False
-
-    def __init__(self, **data: Any) -> None:
-        super().__init__(**data)
-        if not self.register_caches:
-            self.register_caches = {0x32: RegisterCache()}
+    def __init__(self) -> None:
+        self.register_caches = {0x32: RegisterCache()}
 
     # These can be overriden by application sublass to receive (raw) updates
     # Note that execute in the context of the reader thread, and so MUST NOT
