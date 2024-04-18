@@ -62,7 +62,7 @@ class RegisterCache(DefaultDict[Register, int]):
     def __init__(self, registers: Optional[dict[Register, int]] = None) -> None:
         if registers is None:
             registers = {}
-        super().__init__(lambda: 0, registers)
+        super().__init__(lambda: None, registers)
 
     def json(self) -> str:
         """Return JSON representation of the register cache, to mirror `from_json()`."""  # noqa: D402,D202,E501
@@ -276,12 +276,9 @@ class RegisterGetter:
         return self.get(name)
 
     # or you can just use inverter.get('name')
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str) -> Any:
         """Return a named register's value, after pre- and post-conversion."""
-        try:
-            r = self.REGISTER_LUT[key]
-        except KeyError:
-            return default
+        r = self.REGISTER_LUT[key]
         regs = [self.cache[r] for r in r.registers]
 
         if None in regs:
