@@ -162,21 +162,11 @@ class Plant:
                 if slave_address >= 0x32:
                     self.holding_register_updated(pdu.register, pdu.value)
 
+    # Somewhat redundant now - the number of batteries is automatically refreshed
+    # on any interesting input register response
     def detect_batteries(self) -> None:
-        """Determine the number of batteries based on whether the register data is valid.
-
-        Since we attempt to decode register data in the process, it's possible for an
-        exception to be raised.
-        """
-        i = 0
-        for i in range(6):
-            try:
-                # TODO must not use assert for required runtime tests
-                assert Battery.from_orm(self.register_caches[i + 0x32]).is_valid()
-            except (KeyError, AssertionError):
-                break
-        self.number_batteries = i
-        _logger.info("Found %d batteries", i)
+        """Determine the number of batteries based on whether the register data is valid."""
+        _logger.info("Found %d batteries", self.number_batteries)
 
     @property
     def inverter(self) -> Inverter:
