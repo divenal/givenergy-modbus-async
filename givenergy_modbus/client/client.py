@@ -85,9 +85,6 @@ class Client:
         # on the responses, so nothing more is needed here.
         reqs = commands.refresh_plant_data(9999, 9999, 9999, 5)
         await self.execute(reqs, timeout=timeout, retries=retries, return_exceptions = True)
-
-        # Use that to detect the number of batteries
-        # self.plant.detect_batteries()
         _logger.info("Batteries detected: %d", self.plant.number_batteries)
 
     async def close(self) -> None:
@@ -162,10 +159,7 @@ class Client:
                 handler()
             await asyncio.sleep(refresh_period)
             if not passive:
-                reqs = commands.refresh_plant_data(False, self.plant.number_batteries)
-                await self.execute(
-                    reqs, timeout=timeout, retries=retries, return_exceptions=True
-                )
+                await self.refresh_plant(False)
 
     async def one_shot_command(
         self, requests: list[TransparentRequest], timeout=1.5, retries=0
