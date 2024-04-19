@@ -3,10 +3,11 @@
 .AppleDouble
 .LSOverride
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL / backup files
 __pycache__/
 *.py[cod]
 *$py.class
+*~
 
 # C extensions
 *.so
