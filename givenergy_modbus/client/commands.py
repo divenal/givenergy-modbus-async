@@ -5,14 +5,17 @@ They simply prepare lists of requests that need to be sent using
 the client.
 """
 
+# see end of file for code that dynamically appends to the docstring
+
 from datetime import datetime
-from typing import Optional
+import logging
+from textwrap import dedent
+from typing import Optional, Any
 from typing_extensions import deprecated  # type: ignore[attr-defined]
 
 from ..model import TimeSlot
 from ..model.inverter import (
     Inverter,
-    BatteryPauseMode,
 )
 from ..pdu import (
     ReadHoldingRegistersRequest,
@@ -20,6 +23,8 @@ from ..pdu import (
     TransparentRequest,
     WriteHoldingRegisterRequest,
 )
+
+_logger = logging.getLogger(__name__)
 
 # TODO: This list is deprecated. Use write_named_register() to find the
 # register number from the master list in the inverter and perform
@@ -63,8 +68,66 @@ class RegisterMap:
 # done automatically.
 def write_named_register(name: str, value: int) -> TransparentRequest:
     """Prepare a request to write to a register."""
+    _logger.debug("commands.write_named_register %s = %d", str, value)
     idx = Inverter.lookup_writable_register(name, value)
     return WriteHoldingRegisterRequest(idx, value)
+
+
+# rather than writing lots of trivial setter methods,
+# this translates implicit commands into calls to helpers:
+#   commands.set_xyz(value) -> _set_helper('set_xyz', value)
+#   commands.reset_XXX_slot_N() -> _set_timeslot('XXX_slot_N', None)
+
+# Invoking commands.xyz(value) is a two-step process:
+#  callable = getattr(commands, 'xyz')
+#  callable(value)
+# so __getattr__ returns a lambda that supplies the name and
+# takes the value as a parameter.
+
+
+def __getattr__(name: str) -> callable:
+    if name.startswith("reset_") and "_slot" in name:
+        return lambda: _set_timeslot(name[6:], None)
+    if name.startswith("set_"):
+        return lambda value: _set_helper(name, value)
+    raise AttributeError(f"No {name} in {__name__}")
+
+
+# This is a generic register setter.
+# Usually invokved via __getattr__
+# TODO: strip out the leading "set_" before calling this ?
+
+
+def _set_helper(name: str, value: Any) -> list[TransparentRequest]:
+    """Helper for anonymous commands."""
+    _logger.debug("commands._set_helper: %s %s", name, value)
+    if not name.startswith("set_"):
+        raise AttributeError
+    name = name[4:]
+    if isinstance(value, TimeSlot):
+        return _set_timeslot(name, value)
+    # Otherwise just a single register access
+    return [write_named_register(name, int(value))]
+
+
+# A helper to write a timeslot to a pair of adjacent time registers
+# Assumes the time registers are called name_start and name_end
+
+
+def _set_timeslot(
+    name: str, value: Optional[TimeSlot] = None
+) -> list[TransparentRequest]:
+    """Set a pair of start/end time slots."""
+    if value is None:
+        start = 0
+        end = 0
+    else:
+        start = 100 * value.start.hour + value.start.minute
+        end = 100 * value.end.hour + value.end.minute
+    return [
+        write_named_register(name + "_start", start),
+        write_named_register(name + "_end", end),
+    ]
 
 
 def refresh_plant_data(
@@ -202,22 +265,6 @@ def set_battery_soc_reserve(val: int) -> list[TransparentRequest]:
     return [WriteHoldingRegisterRequest(RegisterMap.BATTERY_SOC_RESERVE, val)]
 
 
-def set_battery_charge_limit(val: int) -> list[TransparentRequest]:
-    """Set the battery charge power limit as percentage. 50% (2.6 kW) is the maximum for most inverters."""
-    val = int(val)
-    if not 0 <= val <= 50:
-        raise ValueError(f"Specified Charge Limit ({val}%) is not in [0-50]%")
-    return [WriteHoldingRegisterRequest(RegisterMap.BATTERY_CHARGE_LIMIT, val)]
-
-
-def set_battery_discharge_limit(val: int) -> list[TransparentRequest]:
-    """Set the battery discharge power limit as percentage. 50% (2.6 kW) is the maximum for most inverters."""
-    val = int(val)
-    if not 0 <= val <= 50:
-        raise ValueError(f"Specified Discharge Limit ({val}%) is not in [0-50]%")
-    return [WriteHoldingRegisterRequest(RegisterMap.BATTERY_DISCHARGE_LIMIT, val)]
-
-
 def set_battery_power_reserve(val: int) -> list[TransparentRequest]:
     """Set the battery power reserve to maintain."""
     # TODO what are valid values?
@@ -229,72 +276,6 @@ def set_battery_power_reserve(val: int) -> list[TransparentRequest]:
             RegisterMap.BATTERY_DISCHARGE_MIN_POWER_RESERVE, val
         )
     ]
-
-
-def set_battery_pause_mode(val: BatteryPauseMode) -> list[TransparentRequest]:
-    """Set the battery pause mode."""
-    if not 0 <= val <= 3:
-        raise ValueError(f"Battery pause mode ({val}) must be in [0-3]")
-    return [WriteHoldingRegisterRequest(RegisterMap.BATTERY_PAUSE_MODE, val)]
-
-
-def _set_charge_slot(
-    discharge: bool, idx: int, slot: Optional[TimeSlot]
-) -> list[TransparentRequest]:
-    hr_start, hr_end = (
-        getattr(RegisterMap, f'{"DIS" if discharge else ""}CHARGE_SLOT_{idx}_START'),
-        getattr(RegisterMap, f'{"DIS" if discharge else ""}CHARGE_SLOT_{idx}_END'),
-    )
-    if slot:
-        return [
-            WriteHoldingRegisterRequest(hr_start, int(slot.start.strftime("%H%M"))),
-            WriteHoldingRegisterRequest(hr_end, int(slot.end.strftime("%H%M"))),
-        ]
-    else:
-        return [
-            WriteHoldingRegisterRequest(hr_start, 0),
-            WriteHoldingRegisterRequest(hr_end, 0),
-        ]
-
-
-def set_charge_slot_1(timeslot: TimeSlot) -> list[TransparentRequest]:
-    """Set first charge slot start & end times."""
-    return _set_charge_slot(False, 1, timeslot)
-
-
-def reset_charge_slot_1() -> list[TransparentRequest]:
-    """Reset first charge slot to zero/disabled."""
-    return _set_charge_slot(False, 1, None)
-
-
-def set_charge_slot_2(timeslot: TimeSlot) -> list[TransparentRequest]:
-    """Set second charge slot start & end times."""
-    return _set_charge_slot(False, 2, timeslot)
-
-
-def reset_charge_slot_2() -> list[TransparentRequest]:
-    """Reset second charge slot to zero/disabled."""
-    return _set_charge_slot(False, 2, None)
-
-
-def set_discharge_slot_1(timeslot: TimeSlot) -> list[TransparentRequest]:
-    """Set first discharge slot start & end times."""
-    return _set_charge_slot(True, 1, timeslot)
-
-
-def reset_discharge_slot_1() -> list[TransparentRequest]:
-    """Reset first discharge slot to zero/disabled."""
-    return _set_charge_slot(True, 1, None)
-
-
-def set_discharge_slot_2(timeslot: TimeSlot) -> list[TransparentRequest]:
-    """Set second discharge slot start & end times."""
-    return _set_charge_slot(True, 2, timeslot)
-
-
-def reset_discharge_slot_2() -> list[TransparentRequest]:
-    """Reset second discharge slot to zero/disabled."""
-    return _set_charge_slot(True, 2, None)
 
 
 def set_system_date_time(dt: datetime) -> list[TransparentRequest]:
@@ -348,9 +329,41 @@ def set_mode_storage(
         ret = set_discharge_mode_to_match_demand()  # r27=1
     ret.extend(set_battery_soc_reserve(100))  # r110=100
     ret.extend(set_enable_discharge(True))  # r59=1
-    ret.extend(set_discharge_slot_1(discharge_slot_1))  # r56=1600, r57=700
-    if discharge_slot_2:
-        ret.extend(set_discharge_slot_2(discharge_slot_2))  # r56=1600, r57=700
-    else:
-        ret.extend(reset_discharge_slot_2())
+    ret.extend(_set_timeslot('discharge_slot_1', discharge_slot_1))
+    ret.extend(_set_timeslot('discharge_slot_2', discharge_slot_2))
     return ret
+
+
+# The following auto-generates for the docstring a list of implicit
+# set_XXX commands made available via __getattr__()
+# TODO Ideally this would happen lazily, only when __doc__ is accessed.
+# But pydoc doesn't seem to use __getattr__ to access __doc__ ???
+
+@staticmethod
+def _gen_docstring():
+    """Auto-generate the module docstring."""
+    doc = dedent(
+        """
+
+        The following list of methods was automatically generated from
+        the register definition list in Inverter. They are fabricated at runtime via ``__getattr__``.
+        Note that the actual set of registers available depends on the inverter model - care
+        should be taken to write only to registers that you know exist on the target system.
+        Perhaps by doing a full refresh, and only writing registers which already have
+        a value.
+        It is quite possible that GivEnergy will repurpose register numbers to
+        mean something quite different on different models / firmwares.\n\n"""
+    )
+
+    for reg, defn in Inverter.REGISTER_LUT.items():
+        if defn.valid is not None:
+            doc += "* set_" + reg + "(int)\n"
+            if reg.endswith("_end") and defn.valid[1] == 2359:
+                # we can support timeslot-pairs as a special case
+                doc += "* set_" + reg[:-4] + "(TimeSlot)\n"
+                doc += "* reset_" + reg[:-4] + "()\n"
+
+
+    return doc
+
+__doc__ += _gen_docstring()
