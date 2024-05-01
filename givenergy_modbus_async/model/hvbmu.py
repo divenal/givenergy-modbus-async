@@ -2,14 +2,14 @@ from enum import IntEnum
 
 from pydantic import BaseConfig, create_model
 
-from givenergy_modbus_async.model.register import IR
-from givenergy_modbus_async.model.register import (
+from .register import IR
+from .register import (
     Converter as DT,
 )
-from givenergy_modbus_async.model.register import (
+from .register import (
     RegisterDefinition as Def,
 )
-from givenergy_modbus_async.model.register import (
+from .register import (
     RegisterGetter,
 )
 

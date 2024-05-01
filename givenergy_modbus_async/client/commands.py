@@ -6,11 +6,11 @@ from arrow import Arrow
 from typing_extensions import deprecated  # type: ignore[attr-defined]
 from datetime import datetime
 
-from givenergy_modbus_async.model import TimeSlot
-from givenergy_modbus_async.model.inverter import (
+from ..model import TimeSlot
+from ..model.inverter import (
     BatteryPauseMode,
 )
-from givenergy_modbus_async.pdu import (
+from ..pdu import (
     ReadHoldingRegistersRequest,
     ReadInputRegistersRequest,
     TransparentRequest,

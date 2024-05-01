@@ -6,16 +6,16 @@ from functools import wraps
 from urllib.request import urlopen
 
 ##begin added
-from givenergy_modbus_async.client.commands import *
+from .client.commands import *
 from datetime import datetime
 ##end added
 
-from givenergy_modbus_async.client.client import Client
-#from givenergy_modbus_async.client import Timeslot, commands
-from givenergy_modbus_async.client import commands
+from .client.client import Client
+#from ..client import Timeslot, commands
+from .client import commands
 
 import typer
-from givenergy_modbus_async.pdu import ReadHoldingRegistersRequest
+from .pdu import ReadHoldingRegistersRequest
 from rich.columns import Columns
 from rich.console import Console
 from rich.live import Live

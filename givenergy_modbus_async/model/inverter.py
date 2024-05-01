@@ -3,14 +3,14 @@ import math
 
 from pydantic import BaseConfig, create_model
 
-from givenergy_modbus_async.model.register import HR, IR
-from givenergy_modbus_async.model.register import (
+from .register import HR, IR
+from .register import (
     Converter as C,
 )
-from givenergy_modbus_async.model.register import (
+from .register import (
     RegisterDefinition as Def,
 )
-from givenergy_modbus_async.model.register import (
+from .register import (
     RegisterGetter,
 )
 
