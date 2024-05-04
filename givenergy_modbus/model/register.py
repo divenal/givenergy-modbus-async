@@ -9,7 +9,7 @@ from datetime import datetime
 from json import JSONEncoder
 import math
 from textwrap import dedent
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, ClassVar, Optional, Union
 
 from ..exceptions import (
     ConversionError,
@@ -156,10 +156,10 @@ class RegisterDefinition:
         return hash(self.registers)
 
 
-
 # This is used as the metaclass for Inverter and Battery,
 # in order to dynamically generate a docstring from the
 # register definitions.
+
 
 class DynamicDoc(type):
     """A metaclass for generating dynamic __doc__ string.
@@ -178,14 +178,14 @@ class DynamicDoc(type):
 class RegisterGetter:
     """
     Specifies how device attributes are derived from raw register values.
-    
+
     This is the base class for Inverter and Battery, and provides the common
     code for constructing python attrbitutes from the register definitions.
     """
 
     # defined by subclass
-    REGISTER_LUT: dict[str, RegisterDefinition]
-    _DOC: str
+    REGISTER_LUT: ClassVar[dict[str, RegisterDefinition]]
+    _DOC: ClassVar[str]
 
     # TODO: cache is actually a RegisterCache, but importing that gives a circular dependency
     def __init__(self, cache: Any):
@@ -220,8 +220,6 @@ class RegisterGetter:
                 if isinstance(r.post_conv, tuple):
                     return r.post_conv[0](val, *r.post_conv[1:])
                 else:
-                    if not isinstance(r.post_conv, Callable):
-                        pass
                     return r.post_conv(val)
             return val
         except ValueError as err:
@@ -232,10 +230,10 @@ class RegisterGetter:
     # that defines __doc__ as a property which ends up in here.
     @classmethod
     def _gendoc(cls):
-        """"Construct a docstring from fixed prefix and register list."""
+        """Construct a docstring from fixed prefix and register list."""
 
         doc = cls._DOC + dedent(
-        """
+            """
 
         The following list of attributes was automatically generated from the
         register definition list. They are fabricated at runtime via ``__getattr__``.
@@ -267,13 +265,18 @@ class RegisterEncoder(JSONEncoder):
             return super().default(o)
 
 
+# HR(n) and IR(n) are used throughout to represent
+# registers.
+
+
 class Register:
     """Register base class."""
 
+    __slots__ = "_idx"
     TYPE_HOLDING = "HR"
     TYPE_INPUT = "IR"
 
-    _type: str
+    _type: ClassVar[str]
     _idx: int
 
     def __init__(self, idx):
@@ -284,24 +287,32 @@ class Register:
 
     __repr__ = __str__
 
+    # this assumes HR and IR are not subclassed.
     def __eq__(self, other):
-        return (
-            isinstance(other, Register)
-            and self._type == other._type
-            and self._idx == other._idx
-        )
+        return type(self) is type(other) and self._idx is other._idx
 
-    def __hash__(self):
-        return hash((self._type, self._idx))
+    def __int__(self):
+        return self._idx
+
+
+# Choose simple hash functions that do not overlap
 
 
 class HR(Register):
     """Holding Register."""
 
+    __slots__ = ()
     _type = Register.TYPE_HOLDING
+
+    def __hash__(self):
+        return -10 - self._idx
 
 
 class IR(Register):
     """Input Register."""
 
+    __slots__ = ()
     _type = Register.TYPE_INPUT
+
+    def __hash__(self):
+        return 10 + self._idx
