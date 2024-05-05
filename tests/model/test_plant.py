@@ -51,14 +51,6 @@ def test_instantiation():
     #    '{"register_caches": {"50": {}}, "inverter_serial_number": "", "data_adapter_serial_number": ""}'
     #)
 
-    rc = RegisterCache(registers={HR(1): 2})
-    plant = Plant(inverter_serial_number='AB1234', register_caches={0x30: rc})
-    assert plant.data_adapter_serial_number == ''
-    assert plant.inverter_serial_number == 'AB1234'
-    assert plant.register_caches == {0x30: rc}
-    #with pytest.raises(TypeError, match='keys must be str, int, float, bool or None, not HR'):
-    #    assert Plant(data_adapter_serial_number='ZX9876', register_caches={0x30: rc}).json() == ''
-
 
 def test_plant(
     plant: Plant,
@@ -72,10 +64,23 @@ def test_plant(
 
     # inject register values
     plant.register_caches[0x32].update(register_cache_inverter_daytime_discharging_with_solar_generation)
-    plant.register_caches[0x32].update(register_cache_battery_daytime_discharging)
+    assert plant.inverter.serial_number == 'SA1234G567'
 
-    assert plant.data_adapter_serial_number == ''
-    assert plant.inverter_serial_number == ''
+    # The battery detection is triggered by plant.update(), so poking values directly into
+    # the cache won't achieve that. Fake up a ReadInputRegistersResponse
+    values = (0, ) * 50 + (0x4142, 0x3132, 0x3334, 0x4335, 0x3637,  0, 0, 0, 0, 0)
+    rip = ReadInputRegistersResponse(slave_address=0x32, data_adapter_serial_number='XY1111Z222', inverter_serial_number='FD1111B222', base_register=60, register_count=60, register_values=values)
+
+    plant.update(rip)
+
+    assert plant.data_adapter_serial_number == rip.data_adapter_serial_number
+    assert plant.inverter_serial_number == rip.inverter_serial_number
+
+    assert plant.number_batteries == 1
+    bat = plant.batteries[0]
+    assert isinstance(bat, Battery)
+    assert bat.serial_number == 'AB1234C567'
+
     #with pytest.raises(TypeError, match='keys must be str, int, float, bool or None, not HR'):
     #    assert len(plant.json()) > 5000
 
@@ -86,7 +91,6 @@ def test_plant(
 
     assert isinstance(plant.inverter, Inverter)
     # assert plant.inverter == i
-    plant.detect_batteries()
     assert plant.number_batteries == 1
     assert isinstance(plant.batteries[0], Battery)
     # assert plant.batteries[0] == b
@@ -166,6 +170,33 @@ async def test_update(
         assert False
 
 
+
+# check that user hooks are invoked for updated registers
+class MyPlant(Plant):
+    def registers_updated(self, reg, count, values):
+        self.updated = ("reg", reg, count, values)
+
+    def battery_updated(self, number, values):
+        self.updated = ("batt", number, values)
+
+def test_subclass():
+    # tell it in advance to accept battery #2 so it doesn't do a validity check
+    plant = MyPlant(num_batteries=3)
+
+    values = (1,2,3,4,5)
+    rip = ReadInputRegistersResponse(slave_address=0x32, data_adapter_serial_number='XY1111Z222', inverter_serial_number='FD1111B222', base_register=10, register_count=5, register_values=values)
+    plant.update(rip)
+    assert plant.updated[0] == "reg"
+    assert plant.updated[1] == IR(10)
+    assert plant.updated[2] == 5
+    assert plant.updated[3] == values
+
+    values = range(60)
+    rip = ReadInputRegistersResponse(slave_address=0x34, data_adapter_serial_number='XY1111Z222', inverter_serial_number='FD1111B222', base_register=60, register_count=60, register_values=values)
+    plant.update(rip)
+    assert plant.updated[0] == "batt"
+    assert plant.updated[1] == 2
+    assert plant.updated[2] == values
 
 # TODO: there are now many new inverter registers
 # this currently only tests that those that appear in the test
@@ -920,7 +951,8 @@ def test_from_actual():
         ),
     }
 
-    p = Plant(register_caches=register_caches)
+    p = Plant(num_batteries=1)
+    p.register_caches=register_caches
     i = p.inverter
     t = {
         'battery_charge_limit': 50,
@@ -1136,7 +1168,6 @@ def test_from_actual():
     d = { k: v for k, v in i.getall() if k in t }
     assert d == t
 
-    p.detect_batteries()
     assert p.number_batteries == 1
     b = p.batteries[0]
     assert dict(b.getall()) == {
