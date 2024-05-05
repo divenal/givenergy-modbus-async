@@ -14,8 +14,12 @@ from ..framer import (
     Framer,
 )
 from ..model.plant import Plant
+from ..model.register import Register, HR, IR
 from ..pdu import (
     HeartbeatRequest,
+    ReadRegistersRequest,
+    ReadInputRegistersRequest,
+    ReadHoldingRegistersRequest,
     TransparentRequest,
     TransparentResponse,
     WriteHoldingRegisterResponse,
@@ -40,12 +44,18 @@ class Client:
 
     tx_queue: "Queue[Tuple[bytes, Optional[Future]]]"
 
-    def __init__(self, host: str, port: int, connect_timeout: float = 2.0) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        connect_timeout: float = 2.0,
+        plant: Optional[Plant] = None,
+    ) -> None:
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
         self.framer = ClientFramer()
-        self.plant = Plant()
+        self.plant = Plant() if plant is None else plant
         self.tx_queue = Queue(maxsize=20)
         # self.debug_frames = {
         #     'all': Queue(maxsize=1000),
@@ -112,23 +122,41 @@ class Client:
         #     'error': Queue(maxsize=1000),
         # }
 
+    @staticmethod
+    def _read_class(reg: Register, addr: int) -> ReadRegistersRequest:
+        """Helper to return appropriate ReadRegistersRequest for a given register"""
+        cls = (
+            ReadInputRegistersRequest
+            if isinstance(reg, IR)
+            else ReadHoldingRegistersRequest
+        )
+        return cls(base_register=int(reg), register_count=60, slave_address=addr)
+
     async def refresh_plant(
         self,
         full_refresh: bool = True,
-        max_batteries: int = 5,
+        registers: Optional[set[Register]] = None,
+        max_batteries=-1,
         timeout: float = 1.0,
         retries: int = 0,
     ) -> Plant:
         """Refresh data about the Plant."""
-        reqs = commands.refresh_plant_data(
-            full_refresh, self.plant.number_batteries, max_batteries
+
+        plant = self.plant
+
+        # plant.refresh() does the work of choosing which registers to fetch
+        # We just have to turn that into the actual requests.
+
+        reqs = (
+            _read_request(reg, addr)
+            for addr, reg in plant.refresh(
+                full_refresh, registers=registers, max_batteries=max_batteries
+            )
         )
-        await self.execute(reqs, timeout=timeout, retries=retries)
-
-        if full_refresh:
-            self.plant.detect_batteries()
-
-        return self.plant
+        await self.execute(
+            reqs, timeout=timeout, retries=retries, return_exceptions=True
+        )
+        return plant
 
     async def watch_plant(
         self,
@@ -142,7 +170,6 @@ class Client:
         """Refresh data about the Plant."""
         await self.connect()
         await self.refresh_plant(True, max_batteries=max_batteries)
-        self.plant.detect_batteries()
         while True:
             if handler:
                 handler()
@@ -159,7 +186,6 @@ class Client:
         """Run a single set of requests and return."""
         await self.connect()
         await self.execute(requests, timeout=timeout, retries=retries)
-
 
     # The i/o activity is co-ordinated by two background tasks:
     # - the consumer reads from the socket, responds to heartbeat requests,
@@ -186,7 +212,6 @@ class Client:
     #  client.exec() takes an array of requests, and creates one coroutine per request, to run
     #  send_request_and_await_response in parallel. They happen in random order ?
 
-
     async def _task_network_consumer(self):
         """Task for orchestrating incoming data."""
         while hasattr(self, "reader") and self.reader and not self.reader.at_eof():
@@ -195,6 +220,8 @@ class Client:
             for message in self.framer.decode(frame):
                 _logger.debug("Processing %s", message)
                 if isinstance(message, ExceptionBase):
+                    # FIXME: because we can receive unsolicited messages, can't
+                    # assume that it was a response from one of our own messages
                     _logger.warning(
                         "Expected response never arrived but resulted in exception: %s",
                         message,
@@ -297,9 +324,9 @@ class Client:
                     "Cancelling existing in-flight request and replacing: %s", request
                 )
                 existing_response_future.cancel()
-            response_future: Future[
-                TransparentResponse
-            ] = asyncio.get_event_loop().create_future()
+            response_future: Future[TransparentResponse] = (
+                asyncio.get_event_loop().create_future()
+            )
             self.expected_responses[expected_shape_hash] = response_future
 
             frame_sent = asyncio.get_event_loop().create_future()
