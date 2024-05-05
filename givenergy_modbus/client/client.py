@@ -14,8 +14,11 @@ from ..framer import (
     Framer,
 )
 from ..model.plant import Plant
+from ..model.register import Register, IR
 from ..pdu import (
     HeartbeatRequest,
+    ReadInputRegistersRequest,
+    ReadHoldingRegistersRequest,
     TransparentRequest,
     TransparentResponse,
     WriteHoldingRegisterResponse,
@@ -44,13 +47,14 @@ class Client:
         host: str,
         port: int,
         connect_timeout: float = 2.0,
+        plant: Optional[Plant] = None,
         recorder: Optional[BufferedIOBase] = None,
     ) -> None:
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
         self.framer = ClientFramer()
-        self.plant = Plant()
+        self.plant = Plant() if plant is None else plant
         self.tx_queue = Queue(maxsize=20)
 
         # optionally record all received data to a file
@@ -111,23 +115,43 @@ class Client:
 
         self.expected_responses = {}
 
+    def _read_request(self, reg: Register, addr: int) -> TransparentRequest:
+        """Helper to return appropriate ReadRegistersRequest for a given register"""
+        # Could possibly attach ReadInputRegistersRequest to class IR, and
+        # similarly ReadHoldingRegistersRequest to class HR, but that seems to be
+        # violating module boundaries unnecessarily.
+        cls = (
+            ReadInputRegistersRequest
+            if isinstance(reg, IR)
+            else ReadHoldingRegistersRequest
+        )
+        return cls(base_register=int(reg), register_count=60, slave_address=addr)
+
     async def refresh_plant(
         self,
         full_refresh: bool = True,
-        max_batteries: int = 5,
+        registers: Optional[set[Register]] = None,
+        max_batteries=-1,
         timeout: float = 1.0,
         retries: int = 0,
     ) -> Plant:
         """Refresh data about the Plant."""
-        reqs = self.commands.refresh_plant_data(
-            full_refresh, self.plant.number_batteries, max_batteries
+
+        plant = self.plant
+
+        # plant.refresh() does the work of choosing which registers to fetch
+        # We just have to turn that into the actual requests.
+
+        reqs = (
+            self._read_request(reg, addr)
+            for addr, reg in plant.refresh(
+                full_refresh, registers=registers, max_batteries=max_batteries
+            )
         )
-        await self.execute(reqs, timeout=timeout, retries=retries)
-
-        if full_refresh:
-            self.plant.detect_batteries()
-
-        return self.plant
+        await self.execute(
+            reqs, timeout=timeout, retries=retries, return_exceptions=True
+        )
+        return plant
 
     @property
     def commands(self):
@@ -150,7 +174,6 @@ class Client:
         """Refresh data about the Plant."""
         await self.connect()
         await self.refresh_plant(True, max_batteries=max_batteries)
-        self.plant.detect_batteries()
         while True:
             if handler:
                 handler()
@@ -204,6 +227,8 @@ class Client:
             for message in self.framer.decode(frame):
                 _logger.debug("Processing %s", message)
                 if isinstance(message, ExceptionBase):
+                    # FIXME: because we can receive unsolicited messages, can't
+                    # assume that it was a response from one of our own messages
                     _logger.warning(
                         "Expected response never arrived but resulted in exception: %s",
                         message,
